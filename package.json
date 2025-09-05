@@ -1,0 +1,15 @@
+{
+  "name": "pap-discordbot",
+  "version": "1.0.0",
+  "description": "A Discord bot that changes nicknames",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
