@@ -1,5 +1,21 @@
+# Node modules
+node_modules/
+
+# Lock files
+package-lock.json
+yarn.lock
+
+# Config files with sensitive info
 config/config.json
 nicknameTracker.json
-node_modules
-package-lock.json
-"config/config.json" 
+config.env
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional local scripts
+startserver.bat
