@@ -30,43 +30,47 @@ const config = {
   target_channel: process.env.TARGET_CHANNEL,
   nickname: process.env.NICKNAME || "New Nickname",
   prefix: process.env.PREFIX || "!",
-  restoreDelay: 60000, // 60 seconds delay for text channel nickname restoration
 };
 
 const allowedUsers = process.env.ALLOWED_USERS ? process.env.ALLOWED_USERS.split(',') : [];
 const targetChannelId = config.target_channel;
 const newNickname = config.nickname;
 
-const originalNicknames = new Map();
-const typingTimers = new Map(); // to track inactive users
+// HEX color role ID for Discord role (can be added as Railway env variable)
+const colorRoleId = process.env.COLOR_ROLE_ID; // set your color role ID in Railway env
+
+const originalNicknames = new Map(); // stores previous nickname
+const originalRoles = new Map();     // stores previous roles
 const nick = require('./commands/nick.js');
 //#endregion
 
-//#region Helper Function
+//#region Helper Functions
 async function handleNickname(member, inTargetChannel) {
   if (!allowedUsers.includes(member.id)) return;
 
   try {
     if (inTargetChannel) {
-      if (!originalNicknames.has(member.id)) {
-        originalNicknames.set(member.id, member.nickname); // store previous server nickname
-      }
+      // store previous nickname & roles if not stored
+      if (!originalNicknames.has(member.id)) originalNicknames.set(member.id, member.nickname);
+      if (colorRoleId && !originalRoles.has(member.id)) originalRoles.set(member.id, member.roles.cache.map(r => r.id));
+
+      // set nickname
       if (member.nickname !== newNickname) {
         await member.setNickname(newNickname);
         console.log(`[NICK] ${member.user.tag} ➜ "${newNickname}"`);
       }
 
-      // Reset inactivity timer
-      if (typingTimers.has(member.id)) clearTimeout(typingTimers.get(member.id));
-      typingTimers.set(member.id, setTimeout(() => {
-        restoreNickname(member);
-      }, config.restoreDelay));
+      // add color role
+      if (colorRoleId && !member.roles.cache.has(colorRoleId)) {
+        await member.roles.add(colorRoleId);
+        console.log(`[ROLE] ${member.user.tag} added color role`);
+      }
 
     } else {
-      restoreNickname(member);
+      restoreNickname(member); // restore if leaving target
     }
   } catch (err) {
-    console.error(`[ERROR] Failed to change/restore nickname for ${member.user.tag}:`, err);
+    console.error(`[ERROR] Failed to change nickname/role for ${member.user.tag}:`, err);
   }
 }
 
@@ -74,19 +78,24 @@ async function restoreNickname(member) {
   if (!originalNicknames.has(member.id)) return;
 
   try {
-    const original = originalNicknames.get(member.id); // can be null
-    if (member.nickname !== original) {
-      await member.setNickname(original);
-      console.log(`[NICK] ${member.user.tag} restored ➜ "${original || member.user.username}"`);
+    // restore nickname
+    const originalNick = originalNicknames.get(member.id);
+    if (member.nickname !== originalNick) {
+      await member.setNickname(originalNick);
+      console.log(`[NICK] ${member.user.tag} restored ➜ "${originalNick || member.user.username}"`);
     }
     originalNicknames.delete(member.id);
 
-    if (typingTimers.has(member.id)) {
-      clearTimeout(typingTimers.get(member.id));
-      typingTimers.delete(member.id);
+    // restore roles
+    if (colorRoleId && originalRoles.has(member.id)) {
+      const previousRoles = originalRoles.get(member.id);
+      await member.roles.set(previousRoles); // restore all previous roles
+      console.log(`[ROLE] ${member.user.tag} roles restored`);
+      originalRoles.delete(member.id);
     }
+
   } catch (err) {
-    console.error(`[ERROR] Failed to restore nickname for ${member.user.tag}:`, err);
+    console.error(`[ERROR] Failed to restore nickname/role for ${member.user.tag}:`, err);
   }
 }
 //#endregion
