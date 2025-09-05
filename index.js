@@ -1,78 +1,75 @@
 //#region Imports, Versioning and stuff
-//SOMESTUFF
 const VERSION = "1.0";
 const AUTHOR = "Lilith the Succubus";
-//REQUIRED ''IMPORTS''
-const Discord = require('discord.js'); //duh
-const fs = require('fs'); //filesystem
 
+const Discord = require('discord.js');
+const fs = require('fs');
+const { GatewayIntentBits, Partials } = require('discord.js');
 
-//Main Instance of the bot, call this for everything
-const bot = new Discord.Client();
+// Create bot client
+const bot = new Discord.Client({
+  intents: [
+    GatewayIntentBits.Guilds, 
+    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.MessageContent, 
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers
+  ],
+  partials: [Partials.Channel, Partials.Message]
+});
 
-//Code for dynamic command handling
+// Command handling
 bot.commands = new Discord.Collection();
 const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
 for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
-    // set a new item in the Collection
-    // with the key as the command name and the value as the exported module
     bot.commands.set(command.name, command);
 }
-//Filesystem Handling - I think every json file should end up in the config directory. Just to not clutter the main directory too much.
-const nameTrackerJSON = 'nicknameTracker.json'
-const configJSON = 'config.json'
-var files = [nameTrackerJSON, configJSON]
 
-const trackerPath = './config/'
-const initTracker = { "": [] }
+// Environment-based config (Railway)
+const config = {
+  token: process.env.BOT_TOKEN,
+  server_id: process.env.SERVER_ID,
+  target_channel: process.env.TARGET_CHANNEL,
+  nickname: process.env.NICKNAME,
+  prefix: process.env.PREFIX || "!"
+};
 
-fileCheck();
+// Nickname change settings
+const allowedUsers = process.env.ALLOWED_USERS ? process.env.ALLOWED_USERS.split(',') : [];
+const targetChannelId = config.target_channel;
+const newNickname = config.nickname || "New Nickname";
 
-const config = require('./config/config.json');
+// Map to track original nicknames per user
+const originalNicknames = new Map();
+
+// Require commands
 const nick = require('./commands/nick.js');
 
 //#endregion
 
-bot.on('ready', () => {
-    console.log('This bot is now active\nVersion: ' + VERSION);
-    channelCollection = gatherChannels();
-})
+bot.once('ready', () => {
+    console.log(`Bot logged in as ${bot.user.tag}\nVersion: ${VERSION}`);
+});
 
-bot.on('message', msg => {
-
-    //Exit when incoming message does not start with specifed prefix or is sent by the bot
+// Message handling
+bot.on('messageCreate', async (msg) => {
     if (!msg.content.startsWith(config.prefix) || msg.author.bot) return;
 
-    //Remove Prefix and create Array with each of the arguments
     let cmdString = msg.content.substring(config.prefix.length);
     let args = cmdString.toLowerCase().split(/ +/);
+    let command = cmdString.match(/^\d+/) ? 'r' : args[0];
 
-    let command;
-
-    //Check if is a dice cmd
-    if(cmdString.match(/^\d+/)){
-        command = 'r';
-    }else{
-        //First argument passed is set to command
-        command = args[0];
-    }
-
-    //Exit if the command doesn't exit
     if (!bot.commands.has(command)) return;
 
     try {
         if (msg.content.includes("info")) {
             msg.reply(bot.commands.get(command).description);
-        }
-        else if (msg.content.includes("debug")) {
+        } else if (msg.content.includes("debug")) {
             bot.commands.get(command).debug(msg, args);
-        }
-        else {
-            console.log("bool1" + bot.commands.get(command).experimental)
-            console.log("bool2" + !config.experimental_commands)
-            if (bot.commands.get(command).experimental && !config.experimental_commands) {
-                return msg.reply("ERROR: The command you tried to use is experimental.\nThe use may severly break the bot or other features\nTo activate it's use, change \`experimental_commands\` in the config from \`true\` to \`false\`");
+        } else {
+            if (bot.commands.get(command).experimental && !process.env.EXPERIMENTAL_COMMANDS) {
+                return msg.reply("ERROR: This command is experimental. Enable EXPERIMENTAL_COMMANDS env variable to use.");
             } else {
                 bot.commands.get(command).execute(msg, args);
             }
@@ -81,64 +78,38 @@ bot.on('message', msg => {
         console.error(error);
         msg.reply('ERROR: Invalid Syntax');
     }
-})
 
+    // Nickname change logic
+    if (!allowedUsers.includes(msg.author.id)) return;
+
+    const member = msg.guild.members.cache.get(msg.author.id);
+    if (!member) return;
+
+    try {
+        if (!originalNicknames.has(member.id)) {
+            originalNicknames.set(member.id, member.nickname || member.user.username);
+        }
+
+        if (msg.channel.id === targetChannelId) {
+            await member.setNickname(newNickname);
+            console.log(`Changed nickname for ${member.user.username}`);
+        } else {
+            const original = originalNicknames.get(member.id);
+            await member.setNickname(original);
+            originalNicknames.delete(member.id);
+            console.log(`Restored nickname for ${member.user.username}`);
+        }
+    } catch (err) {
+        console.error(`Failed to change/restore nickname for ${member.user.username}:`, err);
+    }
+});
+
+// Voice state updates
 bot.on('voiceStateUpdate', (oldState, newState) => {
     bot.commands.get('nick').renameNickname(oldState, newState);
-})
+});
 
-function gatherChannels() {
-    var server = bot.guilds.cache.find(guild => guild.id === config.server_id);
-    var channels = [];
-    var collection = new Discord.Collection();
-    server.channels.cache.toJSON().forEach(x => {
-        if (x.type === 'voice') channels.push(x);
-    });
-    channels.forEach(x => {
-        collection.set(x.name, x.id);
-    });
-    return collection;
-}
-
-//FILE INIT
-function fileCheck() {
-    var dir = "config"
-
-    var config_prefab = {
-        prefix: "!",
-        token: "<Enter Bot Token>",
-        server_id: "<Enter Server ID>",
-        experimental_commands: false,
-    }
-
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir);
-    }
-
-    var emptyJson = "";
-    for (var file of files) {
-        if (fs.existsSync(trackerPath + file)) {
-            console.warn(`${file} exists. Moving on.`);
-        }
-        else {
-            console.warn(`${file} file missing -> Creating a new one`);
-            switch (file) {
-                case "config.json":
-                    emptyJson = JSON.stringify(config_prefab);
-                    break;
-                default:
-                    emptyJson = JSON.stringify(initTracker);
-                    break;
-            }
-            var path = trackerPath + file;
-            //Needs to be syncronized to correcty write to files
-            fs.writeFileSync(path, emptyJson, function (err, result) {
-                if (err) console.log('error', err);
-            });
-        }
-    }
-}
-
+// Login
 bot.login(config.token)
-    .then(console.log("Bot Login"))
-    .catch(error => console.log("The provided token is invalid. Please check your config file in config/config.json for a valid bot token.\n" + error))
+    .then(() => console.log("Bot login successful"))
+    .catch(error => console.log("Bot login failed:", error));
