@@ -28,7 +28,7 @@ for (const file of commandFiles) {
 
 // Environment-based config (Railway)
 const config = {
-  token: process.env.BOT_TOKEN,
+  token: process.env.TOKEN,
   server_id: process.env.SERVER_ID,
   target_channel: process.env.TARGET_CHANNEL,
   nickname: process.env.NICKNAME,
