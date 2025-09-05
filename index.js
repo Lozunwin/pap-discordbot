@@ -23,23 +23,23 @@ const bot = new Discord.Client({
 });
 //#endregion
 
-//#region Config & Nickname Setup
+//#region Config & Nickname/Role Setup
 const config = {
   token: process.env.TOKEN,
   server_id: process.env.SERVER_ID,
   target_channel: process.env.TARGET_CHANNEL,
   nickname: process.env.NICKNAME || "New Nickname",
+  color_role_id: process.env.COLOR_ROLE_ID, // color role ID
   prefix: process.env.PREFIX || "!",
-  restoreDelay: 60000, // 60 seconds delay for text channel nickname restoration
 };
 
 const allowedUsers = process.env.ALLOWED_USERS ? process.env.ALLOWED_USERS.split(',') : [];
 const targetChannelId = config.target_channel;
 const newNickname = config.nickname;
-const colorRoleId = process.env.COLOR_ROLE_ID; // Temporary color role
+const colorRoleId = config.color_role_id;
 
-const originalNicknames = new Map();
-const typingTimers = new Map(); // Track inactive users
+const originalNicknames = new Map(); // stores previous nickname per user
+const originalRoles = new Map();     // stores previous color role per user
 const nick = require('./commands/nick.js');
 //#endregion
 
@@ -49,32 +49,30 @@ async function handleNickname(member, inTargetChannel) {
 
   try {
     if (inTargetChannel) {
-      // Store original nickname once
+      // Store previous nickname and color role
       if (!originalNicknames.has(member.id)) {
-        originalNicknames.set(member.id, member.nickname || member.user.username);
+        originalNicknames.set(member.id, member.nickname);
       }
 
-      // Change nickname
+      if (!originalRoles.has(member.id) && colorRoleId) {
+        const currentColorRole = member.roles.cache.find(r => r.id === colorRoleId);
+        originalRoles.set(member.id, currentColorRole ? currentColorRole.id : null);
+      }
+
+      // Apply new nickname if needed
       if (member.nickname !== newNickname) {
         await member.setNickname(newNickname);
         console.log(`[NICK] ${member.user.tag} ➜ "${newNickname}"`);
       }
 
-      // Add temporary color role
-      const colorRole = member.guild.roles.cache.get(colorRoleId);
-      if (colorRole && !member.roles.cache.has(colorRole.id)) {
-        await member.roles.add(colorRole);
-        console.log(`[COLOR] ${member.user.tag} temporary role applied`);
+      // Apply color role if defined and not already applied
+      if (colorRoleId && !member.roles.cache.has(colorRoleId)) {
+        await member.roles.add(colorRoleId);
+        console.log(`[ROLE] ${member.user.tag} color role applied`);
       }
 
-      // Reset inactivity timer
-      if (typingTimers.has(member.id)) clearTimeout(typingTimers.get(member.id));
-      typingTimers.set(member.id, setTimeout(() => {
-        restoreNickname(member);
-      }, config.restoreDelay));
-
     } else {
-      restoreNickname(member);
+      await restoreNickname(member);
     }
   } catch (err) {
     console.error(`[ERROR] Failed to change/restore nickname for ${member.user.tag}:`, err);
@@ -82,30 +80,37 @@ async function handleNickname(member, inTargetChannel) {
 }
 
 async function restoreNickname(member) {
-  if (!originalNicknames.has(member.id)) return;
-
   try {
-    const original = originalNicknames.get(member.id);
-
     // Restore nickname
-    if (member.nickname !== original) {
-      await member.setNickname(original);
-      console.log(`[NICK] ${member.user.tag} restored ➜ "${original}"`);
+    if (originalNicknames.has(member.id)) {
+      const originalNick = originalNicknames.get(member.id);
+      if (member.nickname !== originalNick) {
+        await member.setNickname(originalNick);
+        console.log(`[NICK] ${member.user.tag} restored ➜ "${originalNick || member.user.username}"`);
+      }
+      originalNicknames.delete(member.id);
     }
 
-    // Remove temporary color role
-    const colorRole = member.guild.roles.cache.get(colorRoleId);
-    if (colorRole && member.roles.cache.has(colorRole.id)) {
-      await member.roles.remove(colorRole);
-      console.log(`[COLOR] ${member.user.tag} temporary role removed`);
+    // Restore color role
+    if (colorRoleId && originalRoles.has(member.id)) {
+      const previousRoleId = originalRoles.get(member.id);
+
+      if (previousRoleId !== colorRoleId) {
+        // Remove the color role we applied
+        if (member.roles.cache.has(colorRoleId)) {
+          await member.roles.remove(colorRoleId);
+          console.log(`[ROLE] ${member.user.tag} color role removed`);
+        }
+        // Reapply previous role if exists
+        if (previousRoleId) {
+          await member.roles.add(previousRoleId);
+          console.log(`[ROLE] ${member.user.tag} previous color role restored`);
+        }
+      }
+
+      originalRoles.delete(member.id);
     }
 
-    // Clean up
-    originalNicknames.delete(member.id);
-    if (typingTimers.has(member.id)) {
-      clearTimeout(typingTimers.get(member.id));
-      typingTimers.delete(member.id);
-    }
   } catch (err) {
     console.error(`[ERROR] Failed to restore nickname/color for ${member.user.tag}:`, err);
   }
